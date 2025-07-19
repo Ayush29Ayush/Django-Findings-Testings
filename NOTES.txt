@@ -1,0 +1,21 @@
+
+#! Major Packages Used
+1. Django
+2. djangorestframework
+3. djangorestframework_simplejwt
+4. drf-spectacular
+5. PyMuPDF
+6. celery
+7. django-celery-results
+8. django-celery-beat
+9. colorlog
+10. requests
+11. whitenoise
+12. gunicorn
+
+
+#! Commands to run
+0. python manage.py migrate
+1. gunicorn project.wsgi:application -c gunicorn_config.py
+2. celery -A project worker -l info
+3. celery -A project beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
