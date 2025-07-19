@@ -152,7 +152,8 @@ SPECTACULAR_SETTINGS = {
                 'bearerFormat': 'JWT',
             }
         }
-    }
+    },
+    'COMPONENT_SPLIT_REQUEST': True
 }
 
 SIMPLE_JWT = {
@@ -228,6 +229,16 @@ LOGGING = {
             'propagate': True,
         },
         'dummyapp': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'celerydummyapp': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'pdfsummarizer': {
             'handlers': ['console', 'file'],
             'level': 'DEBUG',
             'propagate': False,
