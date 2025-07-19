@@ -12,10 +12,13 @@
 10. requests
 11. whitenoise
 12. gunicorn
+13. flower
 
 
 #! Commands to run
 0. python manage.py migrate
-1. gunicorn project.wsgi:application -c gunicorn_config.py
-2. celery -A project worker -l info
-3. celery -A project beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+1. cp env.example .env
+2. gunicorn project.wsgi:application -c gunicorn_config.py
+3. celery -A project worker -l info
+4. celery -A project beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+5. celery -A project flower
