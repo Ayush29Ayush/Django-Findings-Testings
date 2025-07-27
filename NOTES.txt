@@ -15,10 +15,16 @@
 13. flower
 
 
-#! Commands to run
+#! Commands to run (locally)
 0. python manage.py migrate
 1. cp env.example .env
 2. gunicorn project.wsgi:application -c gunicorn_config.py
 3. celery -A project worker -l info
 4. celery -A project beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
 5. celery -A project flower
+
+
+#! Docker Steps
+1. docker-compose build (for rebuilding images or changes in Dockerfile or requirements.txt or first timer)
+2. docker-compose up -d
+3. docker-compose down
