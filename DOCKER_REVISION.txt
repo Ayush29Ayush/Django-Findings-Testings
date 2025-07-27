@@ -1,0 +1,64 @@
+Docker Concepts - Quick Revision
+===============================
+
+What is Docker?
+---------------
+- Docker is a platform to build, ship, and run applications inside containers.
+- A container is a lightweight, standalone, executable package that includes everything needed to run a piece of software (code, libraries, settings, etc.).
+
+Key Concepts
+------------
+
+1. Images
+   - Blueprint for containers.
+   - Read-only templates with instructions for creating containers.
+   - Built from a Dockerfile.
+
+2. Containers
+   - Running instances of images.
+   - Isolated from the host and other containers.
+   - Can be started, stopped, moved, and deleted.
+
+3. Dockerfile
+   - A script containing commands to assemble a Docker image.
+   - Specifies the base image, steps, environment, and more.
+
+4. Registries
+   - Storage/distribution systems for images.
+   - Docker Hub is the default public registry.
+
+5. Volumes
+   - Mechanism for persisting data from containers.
+   - Keeps data safe even if a container is removed.
+
+6. Networks
+   - Allow containers to communicate with each other and with the outside world.
+   - You can define custom networks for controlling communication.
+
+7. Docker Compose
+   - Tool for orchestrating multi-container applications using a YAML file.
+   - Useful for defining services, networks, and volumes in a single file.
+
+Common Docker Commands
+----------------------
+
+- docker build   -> Build an image from a Dockerfile
+- docker run     -> Start a container from an image
+- docker ps      -> List running containers
+- docker stop    -> Stop a running container
+- docker rm      -> Remove a container
+- docker rmi     -> Remove an image
+- docker pull    -> Download an image from a registry
+- docker push    -> Upload an image to a registry
+
+Typical Workflow
+----------------
+1. Write a Dockerfile for your app.
+2. Build the image: docker build -t myapp .
+3. Run the image as a container: docker run myapp
+4. Use volumes to persist data if needed.
+5. Share your image using Docker Hub or another registry.
+
+Summary
+-------
+Docker enables packaging of software and its dependencies into containers, ensuring consistent operation across different environments and machines.

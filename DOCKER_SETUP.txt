@@ -1,0 +1,268 @@
+#############################################
+# Django + PostgreSQL 17 + Docker Setup     
+#############################################
+
+1. Create/Edit your .env file with these contents:
+
+DJANGO_SECRET_KEY=your-django-secret-key
+DJANGO_DEBUG=True
+DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,web
+
+POSTGRES_DB=your_db
+POSTGRES_USER=your_user
+POSTGRES_PASSWORD=your_password
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+
+CELERY_BROKER_URL=redis://redis:6379/0
+
+---------------------------------------------
+
+2. In requirements.txt, ensure these packages:
+
+psycopg2-binary
+python-decouple
+pytest
+
+---------------------------------------------
+
+3. In your Django settings.py use python-decouple to read your .env file:
+
+from pathlib import Path
+from decouple import config, Csv
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+SECRET_KEY = config('DJANGO_SECRET_KEY', default='unsafe')
+DEBUG = config('DJANGO_DEBUG', default=True, cast=bool)
+ALLOWED_HOSTS = config('DJANGO_ALLOWED_HOSTS', default='127.0.0.1,localhost', cast=Csv())
+
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": config('POSTGRES_DB'),
+        "USER": config('POSTGRES_USER'),
+        "PASSWORD": config('POSTGRES_PASSWORD'),
+        "HOST": config('POSTGRES_HOST'),
+        "PORT": config('POSTGRES_PORT', cast=int),
+    }
+}
+
+---------------------------------------------
+
+4. Dockerfile for your project:
+
+FROM python:3.11-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y netcat-openbsd && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+COPY . .
+
+RUN mkdir -p /app/staticfiles /app/media
+
+COPY ./entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+
+---------------------------------------------
+
+5. entrypoint.sh (placed in project root):
+
+#!/bin/sh
+set -e
+
+# Wait for PostgreSQL to be ready
+echo "Waiting for postgres..."
+while ! nc -z $POSTGRES_HOST $POSTGRES_PORT; do
+  sleep 0.1
+done
+echo "PostgreSQL started"
+
+python manage.py migrate --no-input
+python manage.py collectstatic --no-input
+
+exec "$@"
+
+# (make sure to chmod +x entrypoint.sh)
+
+---------------------------------------------
+
+6. docker-compose.yml:
+
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+  web:
+    build: .
+    command: gunicorn project.wsgi:application --bind 0.0.0.0:8000
+    volumes:
+      - ./staticfiles:/app/staticfiles      # static files available locally
+      - ./media:/app/media                  # media available locally
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+  celery_worker:
+    build: .
+    command: celery -A project worker -l info
+    volumes:
+      - ./media:/app/media
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - postgres
+    restart: unless-stopped
+  celery_beat:
+    build: .
+    command: celery -A project beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - postgres
+    restart: unless-stopped
+  flower:
+    build: .
+    command: celery -A project flower --address=0.0.0.0 --port=5555
+    ports:
+      - "5555:5555"
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - celery_worker
+    restart: unless-stopped
+  tests:
+    build: .
+    command: ["pytest"]
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  postgres_data:
+
+---------------------------------------------
+
+7. Build & launch all services:
+
+docker-compose up --build -d
+
+---------------------------------------------
+
+8. To create a Django superuser:
+
+docker-compose exec web python manage.py createsuperuser
+
+---------------------------------------------
+
+9. To run tests:
+
+docker-compose run --rm tests
+
+---------------------------------------------
+
+10. Access your services:
+
+- Django app:       http://localhost:8000
+- Flower dashboard: http://localhost:5555
+- PostgreSQL:       localhost:5432 (connect using POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB from .env, with pgAdmin/TablePlus/DBeaver/etc.)
+
+---------------------------------------------
+
+# Notes
+
+- Your static files are in './staticfiles' and your media files/uploads (including logs at ./media/logs) are immediately accessible on your host machine.
+- Postgres data is kept in the Docker-managed 'postgres_data' volume.
+- For full backup or migration, copy your local './media', './staticfiles', and (if needed) manage the 'postgres_data' Docker volume.
+
+#############################################
+#           End of Setup Guide              #
+#############################################
+
+
+#########################################
+#   Docker Compose Usage Best Practices #
+#########################################
+
+Daily development:
+- Use:
+    docker-compose up -d
+  (No --build; this starts containers with existing images.)
+
+When you change your Dockerfile, requirements.txt, or dependencies:
+- Use:
+    docker-compose up --build -d
+  (This forces Docker to rebuild images before starting containers.)
+
+Quick one-time development or debugging (to watch live logs for all services):
+- Use:
+    docker-compose up
+  (No -d; this keeps logs printed in your current terminal window.)
+
+-------------------------------------------
+
+IN SUMMARY
+
+First setup, or if you change Dockerfile/dependencies:
+    docker-compose up --build -d
+
+Most other times (just restart your stack):
+    docker-compose up -d
+
+Watching logs in the foreground for debugging:
+    docker-compose up
+
+#########################################
+#        End of Docker Compose Notes    #
+#########################################
+
+
+#########################################
+#         Docker Compose Commands       #
+#########################################
+
+Q) How to enter any container?
+
+  - docker-compose exec web bash
+  - docker-compose exec web python manage.py shell
+  - docker-compose exec web python manage.py createsuperuser
+  - docker-compose exec web python manage.py migrate
+
+  - docker-compose exec celery_worker celery -A project worker -l info
+  - docker-compose exec celery_beat celery -A project beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+  - docker-compose exec flower celery -A project flower --address=0.0.0.0 --port=5555
+
+  - docker-compose exec postgres psql -U postgres -d djangofindingstestings
+  - docker-compose exec postgres psql -U postgres -d djangofindingstestings -c "select * from auth_user"
