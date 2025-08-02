@@ -1,0 +1,307 @@
+### Django + PostgreSQL + Celery + Redis + Prometheus + Grafana Docker Setup
+
+1.  **Create/Edit your `.env` file with these contents:**
+
+    ```
+    # Django Settings
+    DJANGO_SECRET_KEY=your-django-secret-key
+    DJANGO_DEBUG=True
+    DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,web
+
+    # PostgreSQL Settings
+    POSTGRES_DB=your_db
+    POSTGRES_USER=your_user
+    POSTGRES_PASSWORD=your_password
+    POSTGRES_HOST=postgres
+    POSTGRES_PORT=5432
+
+    # Celery Settings
+    CELERY_BROKER_URL=redis://redis:6379/0
+
+    # Grafana Credentials
+    GF_SECURITY_ADMIN_USER=admin
+    GF_SECURITY_ADMIN_PASSWORD=your_strong_password
+    ```
+
+2.  **In `requirements.txt`, ensure you have these packages:**
+
+    ```
+    django-prometheus
+    psycopg2-binary
+    python-decouple
+    pytest
+    # ... other requirements
+    ```
+
+3.  **Update your Django `settings.py`:**
+
+    *   Add `django_prometheus` to `INSTALLED_APPS`.
+    *   Add the Prometheus middleware. It's important to place them at the beginning and end of the list.
+
+    ```
+    # settings.py
+    from decouple import config, Csv
+
+    # ... other imports
+
+    INSTALLED_APPS = [
+        "django_prometheus",
+        # ... other apps
+    ]
+
+    MIDDLEWARE = [
+        "django_prometheus.middleware.PrometheusBeforeMiddleware",
+        # ... all your other middleware
+        "django_prometheus.middleware.PrometheusAfterMiddleware",
+    ]
+
+    # ... other settings
+
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": config('POSTGRES_DB'),
+            "USER": config('POSTGRES_USER'),
+            "PASSWORD": config('POSTGRES_PASSWORD'),
+            "HOST": config('POSTGRES_HOST'),
+            "PORT": config('POSTGRES_PORT', cast=int),
+        }
+    }
+    ```
+
+4.  **Update your main `urls.py` to expose the metrics endpoint:**
+
+    ```
+    # project/urls.py
+    from django.urls import path, include
+
+    urlpatterns = [
+        # ... your other url patterns
+        path('prometheus/', include('django_prometheus.urls')),
+    ]
+    ```
+
+5.  **Create a `prometheus.yml` file in your project root:**
+
+    ```
+    # prometheus.yml
+    global:
+      scrape_interval: 15s
+
+    scrape_configs:
+      - job_name: 'django'
+        metrics_path: /prometheus/metrics
+        static_configs:
+          - targets: ['web:8000']
+    ```
+
+6.  **`Dockerfile` for your project:**
+
+    ```
+    FROM python:3.11-slim-bookworm
+
+    ENV PYTHONDONTWRITEBYTECODE=1
+    ENV PYTHONUNBUFFERED=1
+
+    WORKDIR /app
+
+    RUN apt-get update && apt-get install -y netcat-openbsd && rm -rf /var/lib/apt/lists/*
+
+    COPY requirements.txt .
+    RUN pip install --upgrade pip && pip install -r requirements.txt
+
+    COPY . .
+
+    RUN mkdir -p /app/staticfiles /app/media
+
+    COPY ./entrypoint.sh /entrypoint.sh
+    RUN chmod +x /entrypoint.sh
+
+    ENTRYPOINT ["/entrypoint.sh"]
+    ```
+
+7.  **`entrypoint.sh` (placed in project root):**
+
+    ```
+    #!/bin/sh
+    set -e
+
+    # Wait for PostgreSQL to be ready
+    echo "Waiting for postgres..."
+    while ! nc -z $POSTGRES_HOST $POSTGRES_PORT; do
+      sleep 0.1
+    done
+    echo "PostgreSQL started"
+
+    python manage.py migrate --no-input
+    python manage.py collectstatic --no-input
+
+    exec "$@"
+    ```
+    *(Remember to make it executable: `chmod +x entrypoint.sh`)*
+
+8.  **Complete `docker-compose.yml`:**
+
+    ```
+    version: '3.8'
+
+    services:
+      postgres:
+        image: postgres:17
+        restart: unless-stopped
+        env_file:
+          - .env
+        volumes:
+          - postgres_data:/var/lib/postgresql/data
+        ports:
+          - "5432:5432"
+
+      redis:
+        image: redis:7-alpine
+        restart: unless-stopped
+
+      web:
+        build: .
+        command: gunicorn project.wsgi:application --bind 0.0.0.0:8000
+        volumes:
+          - ./staticfiles:/app/staticfiles
+          - ./media:/app/media
+        ports:
+          - "8000:8000"
+        env_file:
+          - .env
+        depends_on:
+          - postgres
+          - redis
+        restart: unless-stopped
+
+      celery_worker:
+        build: .
+        command: celery -A project worker -l info
+        volumes:
+          - ./media:/app/media
+        env_file:
+          - .env
+        depends_on:
+          - redis
+          - postgres
+        restart: unless-stopped
+
+      celery_beat:
+        build: .
+        command: celery -A project beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+        env_file:
+          - .env
+        depends_on:
+          - redis
+          - postgres
+        restart: unless-stopped
+
+      flower:
+        build: .
+        command: celery -A project flower --address=0.0.0.0 --port=5555
+        ports:
+          - "5555:5555"
+        env_file:
+          - .env
+        depends_on:
+          - redis
+          - celery_worker
+        restart: unless-stopped
+
+      prometheus:
+        image: prom/prometheus:latest
+        restart: unless-stopped
+        volumes:
+          - ./prometheus.yml:/etc/prometheus/prometheus.yml
+        ports:
+          - "9090:9090"
+        depends_on:
+          - web
+
+      grafana:
+        image: grafana/grafana:latest
+        restart: unless-stopped
+        env_file:
+          - .env
+        ports:
+          - "3000:3000"
+        volumes:
+          - grafana_data:/var/lib/grafana
+        depends_on:
+          - prometheus
+
+      tests:
+        build: .
+        command: ["pytest"]
+        env_file:
+          - .env
+        depends_on:
+          - postgres
+          - redis
+
+    volumes:
+      postgres_data:
+      grafana_data:
+    ```
+
+9.  **Build & launch all services:**
+    ```
+    docker-compose up --build -d
+    ```
+
+10. **Access your services:**
+    *   **Django app**: `http://localhost:8000`
+    *   **Flower dashboard**: `http://localhost:5555`
+    *   **Prometheus UI**: `http://localhost:9090`
+    *   **Grafana UI**: `http://localhost:3000`
+    *   **PostgreSQL**: `localhost:5432`
+
+11. **Set up Grafana Dashboard:**
+    *   Log into Grafana (`http://localhost:3000`) with the credentials from your `.env` file.
+    *   Go to **Connections > Data sources > Add data source > Prometheus**.
+    *   Set the **Prometheus server URL** to `http://prometheus:9090`.
+    *   Click **Save & test**.
+    *   Go to **Dashboards > New > Import**.
+    *   Use the ID `17658` to import a pre-made Django dashboard. Select your Prometheus data source when prompted.
+
+---
+### **Docker Compose Usage Best Practices**
+
+**Daily development:**
+```
+docker-compose up -d
+```
+*(No --build; this starts containers with existing images.)*
+
+**When you change your Dockerfile, requirements.txt, or dependencies:**
+```
+docker-compose up --build -d
+```
+*(This forces Docker to rebuild images before starting containers.)*
+
+**Quick one-time development or debugging (to watch live logs for all services):**
+```
+docker-compose up
+```
+*(No -d; this keeps logs printed in your current terminal window.)*
+
+---
+### **Common Docker Compose Commands**
+
+*   **Create a Django superuser**:
+    ```
+    docker-compose exec web python manage.py createsuperuser
+    ```
+*   **Run tests**:
+    ```
+    docker-compose run --rm tests
+    ```
+*   **Enter a container's shell**:
+    ```
+    docker-compose exec web bash
+    ```
+*   **Access the database directly**:
+    ```
+    docker-compose exec postgres psql -U your_user -d your_db
+    ```
